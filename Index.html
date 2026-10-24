@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <title>Baseline Content Audit Tool</title>
+  <?!= include('Styles'); ?>
+</head>
+  </head>
+
+  <body>
+    <div class="app-shell">
+      <header class="app-header">
+        <div class="header-content">
+          <div>
+            <div class="eyebrow">Internal SEO Tool</div>
+            <h1>Baseline Content Audit Tool</h1>
+            <p>Upload Screaming Frog CSV để tạo audit action-first cho SEOer.</p>
+          </div>
+
+          <div class="version-box">
+            <span id="appVersion">Tool v...</span>
+            <span id="auditEngineVersion">Audit Logic v...</span>
+          </div>
+        </div>
+      </header>
+
+      <nav class="app-tabs">
+        <button id="tabButtonSetup" class="tab-button active" onclick="switchTab('setup')">
+          <span class="tab-icon">01</span>
+          <span>
+            <strong>Audit Setup</strong>
+            <small>Upload & chạy audit</small>
+          </span>
+        </button>
+
+        <button id="tabButtonDashboard" class="tab-button" onclick="switchTab('dashboard')">
+          <span class="tab-icon">02</span>
+          <span>
+            <strong>Dashboard</strong>
+            <small>Visual summary</small>
+          </span>
+        </button>
+
+        <button id="tabButtonHistory" class="tab-button" onclick="switchTab('history')">
+          <span class="tab-icon">03</span>
+          <span>
+            <strong>History</strong>
+            <small>Audit đã chạy</small>
+          </span>
+        </button>
+      </nav>
+
+      <section class="stepper-card">
+        <div class="stepper">
+          <div id="step1" class="step-item active">
+            <span>1</span>
+            <div>
+              <strong>Cấu hình</strong>
+              <small>Dự án & website type</small>
+            </div>
+          </div>
+
+          <div id="step2" class="step-item">
+            <span>2</span>
+            <div>
+              <strong>Upload</strong>
+              <small>File Screaming Frog CSV</small>
+            </div>
+          </div>
+
+          <div id="step3" class="step-item">
+            <span>3</span>
+            <div>
+              <strong>Xử lý</strong>
+              <small>Normalize & audit</small>
+            </div>
+          </div>
+
+          <div id="step4" class="step-item">
+            <span>4</span>
+            <div>
+              <strong>Kết quả</strong>
+              <small>Dashboard & output</small>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <main>
+        <section id="tabSetup" class="tab-panel active">
+          <div class="two-columns">
+            <div class="main-column">
+              <section class="card">
+                <div class="card-header">
+                  <h2>1. Cấu hình audit</h2>
+                  <p>Thông tin này giúp tool áp dụng guardrail phù hợp hơn.</p>
+                </div>
+
+                <div class="form-grid">
+                  <div class="form-group">
+                    <label for="projectName">Project Name <span>*</span></label>
+                    <input id="projectName" type="text" placeholder="VD: GFCalumi">
+                  </div>
+
+                  <div class="form-group">
+                    <label for="websiteType">Website Type</label>
+                    <select id="websiteType" onchange="handleWebsiteTypeChange()">
+                      <option value="general">Tổng hợp / Khác</option>
+                      <option value="ecommerce">Ecommerce</option>
+                      <option value="services" selected>Dịch vụ / Local Business</option>
+                      <option value="blog">Blog / Publisher</option>
+                      <option value="directory">Directory / Marketplace</option>
+                    </select>
+                  </div>
+
+                  <div class="form-group">
+                    <label for="exportSource">Export Source</label>
+                    <select id="exportSource" onchange="handleExportSourceChange()">
+                      <option value="internal_html">Internal &gt; HTML</option>
+                      <option value="internal_all" selected>Internal &gt; All</option>
+                      <option value="unknown">Không chắc</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div id="websiteTypeDescription" class="info-callout">
+                  Đang tải mô tả website type...
+                </div>
+
+                <div id="exportSourceDescription" class="soft-callout">
+                  Đang tải mô tả export source...
+                </div>
+
+                <div class="form-group">
+                  <div class="label-row">
+                    <label for="protectedPatterns">Protected Patterns tuỳ chọn</label>
+                    <button type="button" class="ghost-button" onclick="addDefaultProtectedPatterns()">
+                      Thêm pattern mặc định
+                    </button>
+                  </div>
+
+                  <textarea id="protectedPatterns" rows="5" placeholder="/dich-vu/
+/bao-gia/
+/lien-he/"></textarea>
+                  <p class="hint">
+                    Mỗi dòng một pattern. URL match pattern này sẽ được chặn action rủi ro như Noindex/Xóa/Gộp nếu chưa review.
+                  </p>
+                </div>
+
+                <div class="pattern-preview-grid">
+                  <div class="pattern-preview">
+                    <h3>Protected patterns mặc định</h3>
+                    <div id="protectedPatternBadges" class="badge-list"></div>
+                  </div>
+
+                  <div class="pattern-preview">
+                    <h3>Review patterns mặc định</h3>
+                    <div id="reviewPatternBadges" class="badge-list"></div>
+                  </div>
+
+                  <div class="pattern-preview">
+                    <h3>Excluded patterns mặc định</h3>
+                    <div id="excludedPatternBadges" class="badge-list"></div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="card">
+                <div class="card-header">
+                  <h2>2. Upload file Screaming Frog CSV</h2>
+                  <p>Khuyến nghị dùng file Internal &gt; All hoặc Internal &gt; HTML đã connect GSC/GA4.</p>
+                </div>
+
+                <div class="upload-box">
+                  <input id="csvFile" type="file" accept=".csv,.txt">
+                  <div>
+                    <strong id="fileInfoTitle">Chưa chọn file</strong>
+                    <p id="fileInfo" class="hint">Hỗ trợ file .csv hoặc .txt. Khuyến nghị file dưới 10MB.</p>
+                  </div>
+                </div>
+
+                <button id="runButton" class="primary-button" onclick="handleRunAudit()">
+                  Chạy Audit
+                </button>
+              </section>
+
+              <section id="statusCard" class="card status-card hidden">
+                <div class="card-header">
+                  <h2>3. Trạng thái xử lý</h2>
+                  <p>Tool đang xử lý file và tạo Google Sheet output.</p>
+                </div>
+
+                <div class="progress-wrapper">
+                  <div id="progressBar" class="progress-bar"></div>
+                </div>
+
+                <p id="statusText">Đang chờ...</p>
+
+                <div class="process-list">
+                  <div id="processReadFile" class="process-item">Đọc file CSV</div>
+                  <div id="processParse" class="process-item">Parse headers & rows</div>
+                  <div id="processNormalize" class="process-item">Normalize data</div>
+                  <div id="processAudit" class="process-item">Chạy Audit Engine</div>
+                  <div id="processSheet" class="process-item">Tạo Google Sheet output</div>
+                </div>
+              </section>
+
+              <section id="errorCard" class="card error-card hidden">
+                <div class="card-header">
+                  <h2>Lỗi</h2>
+                </div>
+
+                <pre id="errorText"></pre>
+              </section>
+            </div>
+
+            <aside class="side-column">
+              <section class="card sticky-card">
+                <div class="card-header">
+                  <h2>Data Requirement Guide</h2>
+                  <p>File export nên có các field sau để audit tốt hơn.</p>
+                </div>
+
+                <div class="guide-section">
+                  <h3>Bắt buộc</h3>
+                  <ul id="requiredFieldList"></ul>
+                </div>
+
+                <div class="guide-section">
+                  <h3>Khuyến nghị</h3>
+                  <ul id="recommendedFieldList"></ul>
+                </div>
+
+                <div class="guide-note">
+                  <strong>Lưu ý:</strong>
+                  Missing data không được hiểu là bằng 0. Nếu GA4 conversions/revenue = 0 toàn site, cần kiểm tra Key Events trước khi pruning.
+                </div>
+              </section>
+
+              <section class="card compact-card">
+                <div class="card-header">
+                  <h2>Output chính</h2>
+                </div>
+
+                <ol class="output-guide">
+                  <li><strong>Dashboard Web App</strong> — xem nhanh kết quả.</li>
+                  <li><strong>History</strong> — mở lại các file audit cũ.</li>
+                  <li><strong>06_SUMMARY</strong> — xem tổng quan trong Sheet.</li>
+                  <li><strong>05_AUDIT_ACTIONS</strong> — xử lý từng URL.</li>
+                  <li><strong>DEBUG_*</strong> — kiểm tra dữ liệu khi cần.</li>
+                </ol>
+              </section>
+            </aside>
+          </div>
+        </section>
+
+        <section id="tabDashboard" class="tab-panel">
+          <section id="dashboardEmptyState" class="card empty-dashboard">
+            <div class="empty-icon">📊</div>
+            <h2>Chưa có dữ liệu dashboard</h2>
+            <p>Hãy chạy audit ở tab <strong>Audit Setup</strong>. Sau khi hoàn tất, dashboard sẽ hiển thị tại đây.</p>
+            <button class="secondary-button" onclick="switchTab('setup')">Quay lại Audit Setup</button>
+          </section>
+
+          <section id="resultCard" class="card result-card hidden">
+            <div class="card-header">
+              <h2>Kết quả audit</h2>
+              <p>Audit đã hoàn tất. Xem dashboard nhanh bên dưới hoặc mở Google Sheet để xử lý chi tiết.</p>
+            </div>
+
+            <div id="resultContent"></div>
+          </section>
+
+<section id="dashboardCard" class="card dashboard-card hidden">
+  <div class="card-header dashboard-header">
+    <div>
+      <h2>Dashboard đánh giá dữ liệu</h2>
+      <p>Visual summary được tạo trực tiếp trong Web App sau khi audit xong.</p>
+    </div>
+
+    <button id="downloadPdfButton" class="pdf-button" onclick="downloadDashboardPdf()">
+      Tải Dashboard PDF
+    </button>
+  </div>
+
+  <div id="dashboardContent"></div>
+</section>
+        </section>
+
+        <section id="tabHistory" class="tab-panel">
+          <section class="card history-card">
+            <div class="card-header history-header">
+              <div>
+                <h2>Audit History</h2>
+                <p>Danh sách các lần audit gần đây. History chỉ lưu metadata và link Google Sheet output.</p>
+              </div>
+
+              <div class="history-actions">
+                <button class="ghost-button" onclick="loadAuditHistory()">Làm mới</button>
+                <button class="danger-button" onclick="handleClearHistory()">Xóa history</button>
+              </div>
+            </div>
+
+            <div id="historyContent">
+              <div class="history-loading">Đang tải history...</div>
+            </div>
+          </section>
+        </section>
+      </main>
+
+      <footer class="app-footer">
+        <span>© Thịnh VC — Baseline Content Audit Tool</span>
+        <span>Built for internal SEO workflow</span>
+      </footer>
+    </div>
+
+    <?!= include('Client'); ?>
+  </body>
+</html>

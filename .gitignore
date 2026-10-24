@@ -1,0 +1,9 @@
+.clasprc.json
+.clasp.json
+.env
+.env.*
+node_modules/
+dist/
+build/
+*.log
+*.zip

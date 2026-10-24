@@ -1,0 +1,965 @@
+<script>
+var selectedFile = null;
+var uiOptions = null;
+var lastAuditResult = null;
+var auditHistoryCache = [];
+
+  document.addEventListener('DOMContentLoaded', function () {
+    var fileInput = document.getElementById('csvFile');
+
+    fileInput.addEventListener('change', function (event) {
+      selectedFile = event.target.files && event.target.files[0] ? event.target.files[0] : null;
+      renderFileInfo(selectedFile);
+
+      if (selectedFile) {
+        setStepState(2, 'done');
+        setStepState(3, 'active');
+      }
+    });
+
+    loadUiOptions();
+    loadAuditHistory();
+  });
+
+  function switchTab(tabName) {
+    var panels = ['setup', 'dashboard', 'history'];
+
+    panels.forEach(function (name) {
+      var panel = document.getElementById('tab' + capitalize(name));
+      var button = document.getElementById('tabButton' + capitalize(name));
+
+      if (panel) panel.classList.remove('active');
+      if (button) button.classList.remove('active');
+    });
+
+    var targetPanel = document.getElementById('tab' + capitalize(tabName));
+    var targetButton = document.getElementById('tabButton' + capitalize(tabName));
+
+    if (targetPanel) targetPanel.classList.add('active');
+    if (targetButton) targetButton.classList.add('active');
+
+    if (tabName === 'history') {
+      loadAuditHistory();
+    }
+  }
+
+  function capitalize(value) {
+    return String(value).charAt(0).toUpperCase() + String(value).slice(1);
+  }
+
+  function loadUiOptions() {
+    google.script.run
+      .withSuccessHandler(function (options) {
+        uiOptions = options || {};
+        hydrateUiOptions();
+      })
+      .withFailureHandler(function () {
+        uiOptions = getFallbackUiOptions();
+        hydrateUiOptions();
+      })
+      .getUiOptions();
+  }
+
+  function getFallbackUiOptions() {
+    return {
+      appName: 'Baseline Content Audit Tool',
+      version: '1.0.0',
+      auditEngineVersion: '1.2',
+      limits: {
+        maxFileSizeMb: 10,
+        recommendedRows: 10000,
+        maxRows: 20000
+      },
+      requiredFields: ['Address', 'Status Code'],
+      recommendedFields: [
+        'Content Type',
+        'Indexability',
+        'Canonical Link Element 1',
+        'Clicks',
+        'Impressions',
+        'CTR',
+        'Position',
+        'GA4 Sessions',
+        'GA4 Conversions',
+        'Unique Inlinks',
+        'Crawl Depth'
+      ],
+      websiteTypes: [],
+      exportSources: [],
+      defaultPatterns: {
+        protected: {},
+        excluded: {},
+        review: {}
+      }
+    };
+  }
+
+  function hydrateUiOptions() {
+    document.getElementById('appVersion').textContent = 'Tool v' + (uiOptions.version || '1.0.0');
+    document.getElementById('auditEngineVersion').textContent = 'Audit Logic v' + (uiOptions.auditEngineVersion || '1.2');
+
+    renderFieldGuide();
+    handleWebsiteTypeChange();
+    handleExportSourceChange();
+
+    var maxFileSizeMb = uiOptions.limits && uiOptions.limits.maxFileSizeMb ? uiOptions.limits.maxFileSizeMb : 10;
+    document.getElementById('fileInfo').textContent = 'Hỗ trợ file .csv hoặc .txt. Khuyến nghị file dưới ' + maxFileSizeMb + 'MB.';
+  }
+
+  function renderFieldGuide() {
+    var requiredList = document.getElementById('requiredFieldList');
+    var recommendedList = document.getElementById('recommendedFieldList');
+
+    requiredList.innerHTML = '';
+    recommendedList.innerHTML = '';
+
+    (uiOptions.requiredFields || []).forEach(function (field) {
+      var li = document.createElement('li');
+      li.textContent = field;
+      requiredList.appendChild(li);
+    });
+
+    (uiOptions.recommendedFields || []).forEach(function (field) {
+      var li = document.createElement('li');
+      li.textContent = field;
+      recommendedList.appendChild(li);
+    });
+  }
+
+  function handleWebsiteTypeChange() {
+    var websiteType = getValue('websiteType');
+    var desc = getWebsiteTypeDescription(websiteType);
+
+    document.getElementById('websiteTypeDescription').textContent = desc;
+    renderPatternPreview(websiteType);
+  }
+
+  function handleExportSourceChange() {
+    var exportSource = getValue('exportSource');
+    var desc = getExportSourceDescription(exportSource);
+
+    document.getElementById('exportSourceDescription').textContent = desc;
+  }
+
+  function getWebsiteTypeDescription(websiteType) {
+    var options = uiOptions && uiOptions.websiteTypes ? uiOptions.websiteTypes : [];
+
+    for (var i = 0; i < options.length; i++) {
+      if (options[i].value === websiteType) {
+        return options[i].description || '';
+      }
+    }
+
+    if (websiteType === 'services') {
+      return 'Phù hợp với website dịch vụ/local business. Tool sẽ bảo vệ các URL như /dich-vu/, /bao-gia/, /lien-he/.';
+    }
+
+    return 'Tool sẽ áp dụng guardrail cơ bản theo loại website đã chọn.';
+  }
+
+  function getExportSourceDescription(exportSource) {
+    var options = uiOptions && uiOptions.exportSources ? uiOptions.exportSources : [];
+
+    for (var i = 0; i < options.length; i++) {
+      if (options[i].value === exportSource) {
+        return options[i].description || '';
+      }
+    }
+
+    if (exportSource === 'internal_all') {
+      return 'File có thể chứa non-HTML resources. Tool sẽ tự lọc HTML bằng Content Type.';
+    }
+
+    return 'Tool sẽ cố gắng nhận diện dữ liệu dựa trên headers trong file.';
+  }
+
+  function renderPatternPreview(websiteType) {
+    var patterns = uiOptions && uiOptions.defaultPatterns ? uiOptions.defaultPatterns : {};
+
+    renderBadges('protectedPatternBadges', getPatternList(patterns.protected, websiteType));
+    renderBadges('reviewPatternBadges', getPatternList(patterns.review, websiteType));
+    renderBadges('excludedPatternBadges', getPatternList(patterns.excluded, websiteType));
+  }
+
+  function getPatternList(patternGroup, websiteType) {
+    if (!patternGroup) return [];
+
+    return patternGroup[websiteType] || patternGroup.general || [];
+  }
+
+  function renderBadges(containerId, patterns) {
+    var container = document.getElementById(containerId);
+    container.innerHTML = '';
+
+    if (!patterns || !patterns.length) {
+      var empty = document.createElement('span');
+      empty.className = 'empty-badge';
+      empty.textContent = 'Không có pattern mặc định.';
+      container.appendChild(empty);
+      return;
+    }
+
+    patterns.slice(0, 12).forEach(function (pattern) {
+      var badge = document.createElement('span');
+      badge.className = 'pattern-badge';
+      badge.textContent = pattern;
+      container.appendChild(badge);
+    });
+
+    if (patterns.length > 12) {
+      var more = document.createElement('span');
+      more.className = 'pattern-badge';
+      more.textContent = '+' + (patterns.length - 12) + ' pattern';
+      container.appendChild(more);
+    }
+  }
+
+  function addDefaultProtectedPatterns() {
+    var websiteType = getValue('websiteType');
+    var patterns = getPatternList(uiOptions.defaultPatterns && uiOptions.defaultPatterns.protected, websiteType);
+
+    if (!patterns.length) return;
+
+    var textarea = document.getElementById('protectedPatterns');
+    var current = textarea.value || '';
+
+    var currentLines = current
+      .split(/\r?\n/)
+      .map(function (line) { return line.trim(); })
+      .filter(function (line) { return line !== ''; });
+
+    patterns.forEach(function (pattern) {
+      if (currentLines.indexOf(pattern) === -1) {
+        currentLines.push(pattern);
+      }
+    });
+
+    textarea.value = currentLines.join('\n');
+  }
+
+  function handleRunAudit() {
+    hideResult();
+    hideDashboard();
+    hideError();
+
+    switchTab('setup');
+
+    var projectName = getValue('projectName');
+    var websiteType = getValue('websiteType');
+    var exportSource = getValue('exportSource');
+    var protectedPatterns = getValue('protectedPatterns');
+
+    if (!projectName) {
+      showError('Vui lòng nhập Project Name.');
+      return;
+    }
+
+    if (!selectedFile) {
+      showError('Vui lòng chọn file CSV export từ Screaming Frog.');
+      return;
+    }
+
+    var fileName = selectedFile.name || '';
+
+    if (!fileName.toLowerCase().match(/\.(csv|txt)$/)) {
+      showError('MVP hiện chỉ hỗ trợ file .csv hoặc .txt.');
+      return;
+    }
+
+    var maxSizeMb = uiOptions && uiOptions.limits && uiOptions.limits.maxFileSizeMb
+      ? uiOptions.limits.maxFileSizeMb
+      : 10;
+
+    var sizeMb = selectedFile.size / (1024 * 1024);
+
+    if (sizeMb > maxSizeMb) {
+      showError('File đang lớn hơn ' + maxSizeMb + 'MB. MVP nên test với file nhỏ hơn trước.');
+      return;
+    }
+
+    setLoading(true);
+    setStepState(1, 'done');
+    setStepState(2, 'done');
+    setStepState(3, 'active');
+    setStepState(4, '');
+
+    resetProcessItems();
+
+    showStatus('Đang đọc file CSV...', 12, 'processReadFile');
+
+    readFileAsText(selectedFile)
+      .then(function (fileContent) {
+        markProcessDone('processReadFile');
+        showStatus('Đã đọc file. Đang gửi dữ liệu lên Apps Script...', 28, 'processParse');
+
+        var payload = {
+          projectName: projectName,
+          websiteType: websiteType,
+          exportSource: exportSource,
+          protectedPatterns: protectedPatterns,
+          fileName: fileName,
+          fileContent: fileContent
+        };
+
+        setTimeout(function () {
+          markProcessDone('processParse');
+          showStatus('Đang normalize data và kiểm tra readiness...', 48, 'processNormalize');
+        }, 350);
+
+        setTimeout(function () {
+          markProcessDone('processNormalize');
+          showStatus('Đang chạy Audit Engine...', 68, 'processAudit');
+        }, 850);
+
+        google.script.run
+          .withSuccessHandler(function (result) {
+            setLoading(false);
+
+            markProcessDone('processAudit');
+            markProcessDone('processSheet');
+
+            if (!result || !result.success) {
+              showError(result && result.error ? result.error : 'Audit thất bại không rõ lý do.');
+              setStepState(3, '');
+              return;
+            }
+
+            lastAuditResult = result;
+
+            showStatus('Hoàn tất audit.', 100, 'processSheet');
+            setStepState(3, 'done');
+            setStepState(4, 'done');
+
+            showResult(result);
+            renderDashboard(result.dashboard || null);
+
+            if (result.history) {
+              renderHistory(result.history);
+            } else {
+              loadAuditHistory();
+            }
+
+            switchTab('dashboard');
+          })
+          .withFailureHandler(function (error) {
+            setLoading(false);
+            setStepState(3, '');
+            showError(error && error.message ? error.message : String(error));
+          })
+          .runAudit(payload);
+
+        setTimeout(function () {
+          showStatus('Đang tạo Google Sheet output...', 84, 'processSheet');
+        }, 1300);
+      })
+      .catch(function (error) {
+        setLoading(false);
+        setStepState(3, '');
+        showError(error && error.message ? error.message : String(error));
+      });
+  }
+
+  function readFileAsText(file) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+
+      reader.onload = function (event) {
+        resolve(event.target.result);
+      };
+
+      reader.onerror = function () {
+        reject(new Error('Không đọc được file.'));
+      };
+
+      reader.readAsText(file, 'UTF-8');
+    });
+  }
+
+  function renderFileInfo(file) {
+    var title = document.getElementById('fileInfoTitle');
+    var info = document.getElementById('fileInfo');
+
+    if (!file) {
+      title.textContent = 'Chưa chọn file';
+      info.textContent = 'Hỗ trợ file .csv hoặc .txt.';
+      return;
+    }
+
+    var sizeMb = file.size / (1024 * 1024);
+
+    title.textContent = file.name;
+    info.textContent = sizeMb.toFixed(2) + 'MB — sẵn sàng upload.';
+  }
+
+  function showResult(result) {
+    var card = document.getElementById('resultCard');
+    var content = document.getElementById('resultContent');
+    var empty = document.getElementById('dashboardEmptyState');
+
+    if (empty) empty.classList.add('hidden');
+
+    var warningsHtml = '';
+
+    if (result.warnings && result.warnings.length) {
+      warningsHtml = [
+        '<div class="warning-list">',
+        '<strong>Warnings cần chú ý:</strong>',
+        '<ul>',
+        result.warnings.map(function (warning) {
+          return '<li>' + escapeHtml(warning) + '</li>';
+        }).join(''),
+        '</ul>',
+        '</div>'
+      ].join('');
+    }
+
+    content.innerHTML = [
+      '<p><strong>Audit đã hoàn tất.</strong> Bạn có thể xem dashboard nhanh hoặc mở Google Sheet để xử lý chi tiết.</p>',
+      '<p><a class="open-sheet-button" href="' + result.spreadsheetUrl + '" target="_blank">Mở Google Sheet output</a></p>',
+      '<div class="result-meta">',
+      '<div class="meta-item"><strong>Readiness</strong><span>' + escapeHtml(result.readinessStatus || '') + '</span></div>',
+      '<div class="meta-item"><strong>Score</strong><span>' + escapeHtml(String(result.readinessScore || '')) + '</span></div>',
+      '<div class="meta-item"><strong>Uploaded Rows</strong><span>' + escapeHtml(String(result.uploadedRows || 0)) + '</span></div>',
+      '<div class="meta-item"><strong>Audit Rows</strong><span>' + escapeHtml(String(result.auditedUrls || 0)) + '</span></div>',
+      '</div>',
+      '<p class="hint">Sheet chính để xử lý là <strong>05_AUDIT_ACTIONS</strong>. Các sheet DEBUG chỉ dùng khi cần kiểm tra logic/data.</p>',
+      warningsHtml
+    ].join('');
+
+    card.classList.remove('hidden');
+  }
+
+  function renderDashboard(dashboard) {
+    var card = document.getElementById('dashboardCard');
+    var content = document.getElementById('dashboardContent');
+    var empty = document.getElementById('dashboardEmptyState');
+
+    if (empty) empty.classList.add('hidden');
+
+    if (!dashboard) {
+      content.innerHTML = '<p>Không có dashboard data.</p>';
+      card.classList.remove('hidden');
+      return;
+    }
+
+    var overview = dashboard.overview || {};
+    var keyCounts = dashboard.keyCounts || {};
+
+    content.innerHTML = [
+      renderDashboardKpis(overview, keyCounts),
+      renderBreakdownGrid(dashboard),
+      renderWarningsBlock(dashboard.warnings || []),
+      renderTopPriorityRows(dashboard.topPriorityRows || [])
+    ].join('');
+
+card.classList.remove('hidden');
+animateDashboard();
+  }
+
+  function renderDashboardKpis(overview, keyCounts) {
+    return [
+      '<div class="dashboard-kpi-grid">',
+      renderKpiCard('Readiness', overview.readinessStatus || 'Unknown', 'Score: ' + safeText(overview.readinessScore), 'quality'),
+      renderKpiCard('Uploaded Rows', overview.uploadedRows || 0, 'HTML: ' + safeText(overview.htmlRows) + ' / Non-HTML: ' + safeText(overview.nonHtmlRows), 'coverage'),
+      renderKpiCard('Eligible URLs', overview.eligibleRows || 0, 'Audit rows: ' + safeText(overview.auditRows), 'eligible'),
+      renderKpiCard('Cần review', overview.manualReviewRows || 0, 'Manual review required', 'review'),
+      renderKpiCard('Technical', keyCounts.technicalBarrier || 0, 'Rào cản kỹ thuật', 'technical'),
+      renderKpiCard('Growth/CTR', (keyCounts.growthOpportunity || 0) + (keyCounts.ctrOpportunity || 0), 'SEO growth + CTR', 'growth'),
+      renderKpiCard('Internal Link', keyCounts.internalLinkOpportunity || 0, 'Cơ hội Internal Link', 'link'),
+      renderKpiCard('Warnings', overview.warningsCount || 0, 'Cảnh báo dữ liệu', 'warning'),
+      '</div>'
+    ].join('');
+  }
+
+function renderKpiCard(title, value, subtitle, type) {
+  var rawValue = value === null || value === undefined ? '' : String(value);
+  var numericValue = Number(rawValue);
+  var isNumeric = rawValue !== '' && !isNaN(numericValue) && isFinite(numericValue);
+
+  var valueHtml = isNumeric
+    ? '<div class="kpi-value js-count-up" data-target="' + escapeHtml(String(numericValue)) + '">0</div>'
+    : '<div class="kpi-value">' + escapeHtml(rawValue) + '</div>';
+
+  return [
+    '<div class="dashboard-kpi kpi-' + escapeHtml(type || '') + ' dashboard-animate-item">',
+    '<div class="kpi-title">' + escapeHtml(title) + '</div>',
+    valueHtml,
+    '<div class="kpi-subtitle">' + escapeHtml(subtitle || '') + '</div>',
+    '</div>'
+  ].join('');
+}
+
+  function renderBreakdownGrid(dashboard) {
+    return [
+      '<div class="dashboard-breakdown-grid">',
+      renderBarBlock('Priority Breakdown', dashboard.priorityBreakdown || []),
+      renderBarBlock('Label Breakdown', limitItems(dashboard.labelBreakdown || [], 8)),
+      renderBarBlock('Action Breakdown', limitItems(dashboard.actionBreakdown || [], 8)),
+      renderBarBlock('Confidence Breakdown', dashboard.confidenceBreakdown || []),
+      '</div>'
+    ].join('');
+  }
+
+  function renderBarBlock(title, items) {
+    var max = 0;
+
+    items.forEach(function (item) {
+      if (item.count > max) max = item.count;
+    });
+
+    if (!items.length) {
+      return [
+        '<div class="bar-block">',
+        '<h3>' + escapeHtml(title) + '</h3>',
+        '<p class="hint">Không có dữ liệu.</p>',
+        '</div>'
+      ].join('');
+    }
+
+    var rows = items.map(function (item) {
+      var percent = max ? Math.max(4, Math.round((item.count / max) * 100)) : 0;
+
+      return [
+        '<div class="bar-row">',
+        '<div class="bar-row-head">',
+        '<span class="bar-label">' + escapeHtml(item.label) + '</span>',
+        '<strong>' + escapeHtml(String(item.count)) + '</strong>',
+        '</div>',
+        '<div class="mini-bar-track">',
+        '<div class="mini-bar-fill" data-width="' + percent + '" style="width:0%"></div>',
+        '</div>',
+        '</div>'
+      ].join('');
+    }).join('');
+
+    return [
+      '<div class="bar-block">',
+      '<h3>' + escapeHtml(title) + '</h3>',
+      rows,
+      '</div>'
+    ].join('');
+  }
+
+  function renderWarningsBlock(warnings) {
+    if (!warnings || !warnings.length) {
+      return [
+        '<div class="dashboard-section">',
+        '<h3>Warnings</h3>',
+        '<p class="success-text">Không có warning quan trọng.</p>',
+        '</div>'
+      ].join('');
+    }
+
+    return [
+      '<div class="dashboard-section warning-dashboard">',
+      '<h3>Warnings cần chú ý</h3>',
+      '<ul>',
+      warnings.map(function (warning) {
+        return '<li>' + escapeHtml(warning) + '</li>';
+      }).join(''),
+      '</ul>',
+      '</div>'
+    ].join('');
+  }
+
+  function renderTopPriorityRows(rows) {
+    if (!rows || !rows.length) {
+      return [
+        '<div class="dashboard-section">',
+        '<h3>Top URLs cần xem trước</h3>',
+        '<p class="hint">Không có URL ưu tiên.</p>',
+        '</div>'
+      ].join('');
+    }
+
+    var tableRows = rows.map(function (row) {
+      return [
+        '<tr>',
+        '<td class="url-cell" title="' + escapeHtml(row.url) + '">' + escapeHtml(row.url) + '</td>',
+        '<td>' + escapeHtml(row.priority) + '</td>',
+        '<td>' + escapeHtml(row.primaryLabel) + '</td>',
+        '<td>' + escapeHtml(row.action) + '</td>',
+        '<td>' + escapeHtml(row.confidence) + '</td>',
+        '<td>' + escapeHtml(row.manualReview) + '</td>',
+        '</tr>'
+      ].join('');
+    }).join('');
+
+    return [
+      '<div class="dashboard-section">',
+      '<h3>Top URLs cần xem trước</h3>',
+      '<div class="dashboard-table-wrapper">',
+      '<table class="dashboard-table">',
+      '<thead>',
+      '<tr>',
+      '<th>URL</th>',
+      '<th>Ưu tiên</th>',
+      '<th>Nhãn</th>',
+      '<th>Action</th>',
+      '<th>Độ tin cậy</th>',
+      '<th>Review</th>',
+      '</tr>',
+      '</thead>',
+      '<tbody>',
+      tableRows,
+      '</tbody>',
+      '</table>',
+      '</div>',
+      '</div>'
+    ].join('');
+  }
+function viewHistoryDashboardByIndex(index) {
+  var item = auditHistoryCache && auditHistoryCache[index] ? auditHistoryCache[index] : null;
+
+  if (!item) {
+    alert('Không tìm thấy history item.');
+    return;
+  }
+
+  if (!item.dashboardSnapshot) {
+    alert('Lần audit này chưa có dashboard snapshot. Hãy chạy lại audit để lưu dashboard vào history.');
+    return;
+  }
+
+  showHistoryResult(item);
+  renderDashboard(item.dashboardSnapshot);
+  switchTab('dashboard');
+}
+
+function showHistoryResult(item) {
+  var card = document.getElementById('resultCard');
+  var content = document.getElementById('resultContent');
+  var empty = document.getElementById('dashboardEmptyState');
+
+  if (!card || !content) return;
+  if (empty) empty.classList.add('hidden');
+
+  var warningsHtml = '';
+
+  if (item.warnings && item.warnings.length) {
+    warningsHtml = [
+      '<div class="warning-list">',
+      '<strong>Warnings của lần audit này:</strong>',
+      '<ul>',
+      item.warnings.map(function (warning) {
+        return '<li>' + escapeHtml(warning) + '</li>';
+      }).join(''),
+      '</ul>',
+      '</div>'
+    ].join('');
+  }
+
+  content.innerHTML = [
+    '<p><strong>Đang xem lại dashboard từ History.</strong></p>',
+    '<p><a class="open-sheet-button" href="' + escapeHtml(item.spreadsheetUrl || '#') + '" target="_blank">Mở Google Sheet output</a></p>',
+    '<div class="result-meta">',
+    '<div class="meta-item"><strong>Project</strong><span>' + escapeHtml(item.projectName || '') + '</span></div>',
+    '<div class="meta-item"><strong>Readiness</strong><span>' + escapeHtml(item.readinessStatus || '') + '</span></div>',
+    '<div class="meta-item"><strong>Score</strong><span>' + escapeHtml(String(item.readinessScore || '')) + '</span></div>',
+    '<div class="meta-item"><strong>Audit Rows</strong><span>' + escapeHtml(String(item.auditRows || 0)) + '</span></div>',
+    '</div>',
+    '<p class="hint">File: <strong>' + escapeHtml(item.fileName || '') + '</strong> · Created At: ' + escapeHtml(item.createdAt || '') + '</p>',
+    warningsHtml
+  ].join('');
+
+  card.classList.remove('hidden');
+}
+  function loadAuditHistory() {
+    var container = document.getElementById('historyContent');
+    if (container) {
+      container.innerHTML = '<div class="history-loading">Đang tải history...</div>';
+    }
+
+    google.script.run
+      .withSuccessHandler(function (history) {
+        renderHistory(history || []);
+      })
+      .withFailureHandler(function (error) {
+        renderHistoryError(error && error.message ? error.message : String(error));
+      })
+      .getAuditHistory();
+  }
+
+  function renderHistory(history) {
+        auditHistoryCache = history || [];
+    var container = document.getElementById('historyContent');
+    if (!container) return;
+
+    if (!history || !history.length) {
+      container.innerHTML = [
+        '<div class="empty-history">',
+        '<div class="empty-icon small">🗂️</div>',
+        '<h3>Chưa có audit history</h3>',
+        '<p>Sau khi bạn chạy audit thành công, lịch sử sẽ hiển thị tại đây.</p>',
+        '</div>'
+      ].join('');
+      return;
+    }
+
+    var rows = history.map(function (item, index) {
+      var warningsText = item.warningsCount ? item.warningsCount + ' warning' : '0';
+
+      return [
+        '<tr>',
+        '<td>',
+        '<strong>' + escapeHtml(item.projectName || 'Untitled') + '</strong>',
+        '<div class="table-subtext">' + escapeHtml(item.createdAt || '') + '</div>',
+        '</td>',
+        '<td>',
+        escapeHtml(item.fileName || ''),
+        '<div class="table-subtext">' + escapeHtml(item.websiteType || '') + ' · ' + escapeHtml(item.exportSource || '') + '</div>',
+        '</td>',
+        '<td><span class="history-pill">' + escapeHtml(item.readinessStatus || '') + '</span><div class="table-subtext">Score: ' + escapeHtml(String(item.readinessScore || '')) + '</div></td>',
+        '<td>' + escapeHtml(String(item.uploadedRows || 0)) + '</td>',
+        '<td>' + escapeHtml(String(item.auditRows || 0)) + '</td>',
+        '<td>' + escapeHtml(warningsText) + '</td>',
+        '<td>',
+'<div class="history-output-actions">',
+'<button type="button" class="history-link history-dashboard-button" onclick="viewHistoryDashboardByIndex(' + index + ')">Xem Dashboard</button>',
+'<a class="history-link" href="' + escapeHtml(item.spreadsheetUrl || '#') + '" target="_blank">Mở Sheet</a>',
+'</div>',
+'</td>',
+        '</tr>'
+      ].join('');
+    }).join('');
+
+    container.innerHTML = [
+      '<div class="history-summary">',
+      '<strong>' + history.length + '</strong> lần audit gần đây được lưu. History chỉ lưu metadata, không xóa hay chỉnh file output.',
+      '</div>',
+      '<div class="history-table-wrapper">',
+      '<table class="history-table">',
+      '<thead>',
+      '<tr>',
+      '<th>Project</th>',
+      '<th>File</th>',
+      '<th>Readiness</th>',
+      '<th>Uploaded</th>',
+      '<th>Audit Rows</th>',
+      '<th>Warnings</th>',
+      '<th>Output</th>',
+      '</tr>',
+      '</thead>',
+      '<tbody>',
+      rows,
+      '</tbody>',
+      '</table>',
+      '</div>'
+    ].join('');
+  }
+
+  function renderHistoryError(message) {
+    var container = document.getElementById('historyContent');
+    if (!container) return;
+
+    container.innerHTML = [
+      '<div class="history-error">',
+      'Không tải được history: ' + escapeHtml(message || ''),
+      '</div>'
+    ].join('');
+  }
+
+  function handleClearHistory() {
+    var confirmed = confirm('Bạn muốn xóa Audit History? Việc này chỉ xóa metadata history, không xóa các file Google Sheet output.');
+
+    if (!confirmed) return;
+
+    google.script.run
+      .withSuccessHandler(function (result) {
+        renderHistory(result && result.history ? result.history : []);
+      })
+      .withFailureHandler(function (error) {
+        renderHistoryError(error && error.message ? error.message : String(error));
+      })
+      .clearAuditHistory();
+  }
+
+  function limitItems(items, limit) {
+    return (items || []).slice(0, limit || 8);
+  }
+
+  function hideDashboard() {
+    document.getElementById('dashboardCard').classList.add('hidden');
+    document.getElementById('dashboardContent').innerHTML = '';
+
+    var empty = document.getElementById('dashboardEmptyState');
+    if (empty) empty.classList.remove('hidden');
+  }
+
+  function getValue(id) {
+    var el = document.getElementById(id);
+    return el ? String(el.value || '').trim() : '';
+  }
+
+  function setLoading(isLoading) {
+    var button = document.getElementById('runButton');
+
+    button.disabled = isLoading;
+    button.textContent = isLoading ? 'Đang chạy...' : 'Chạy Audit';
+  }
+
+  function setStepState(stepNumber, state) {
+    var el = document.getElementById('step' + stepNumber);
+    if (!el) return;
+
+    el.classList.remove('active');
+    el.classList.remove('done');
+
+    if (state) {
+      el.classList.add(state);
+    }
+  }
+
+  function showStatus(text, percent, processId) {
+    var card = document.getElementById('statusCard');
+    var statusText = document.getElementById('statusText');
+    var progressBar = document.getElementById('progressBar');
+
+    card.classList.remove('hidden');
+    statusText.textContent = text || '';
+    progressBar.style.width = Math.max(0, Math.min(100, percent || 0)) + '%';
+
+    if (processId) {
+      setProcessActive(processId);
+    }
+  }
+
+  function resetProcessItems() {
+    var items = document.querySelectorAll('.process-item');
+    items.forEach(function (item) {
+      item.classList.remove('active');
+      item.classList.remove('done');
+    });
+  }
+
+  function setProcessActive(id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+
+    el.classList.add('active');
+  }
+
+  function markProcessDone(id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+
+    el.classList.remove('active');
+    el.classList.add('done');
+  }
+
+  function hideResult() {
+    document.getElementById('resultCard').classList.add('hidden');
+  }
+
+  function showError(message) {
+    var card = document.getElementById('errorCard');
+    var text = document.getElementById('errorText');
+
+    text.textContent = message || 'Có lỗi xảy ra.';
+    card.classList.remove('hidden');
+
+    showStatus('Có lỗi xảy ra.', 0);
+  }
+
+  function hideError() {
+    document.getElementById('errorCard').classList.add('hidden');
+    document.getElementById('errorText').textContent = '';
+  }
+
+  function safeText(value) {
+    if (value === null || value === undefined || value === '') return '0';
+    return String(value);
+  }
+
+  function escapeHtml(value) {
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+  function animateDashboard() {
+  setTimeout(function () {
+    animateCountUpNumbers();
+    animateMiniBars();
+    animateDashboardItems();
+  }, 80);
+}
+
+function animateCountUpNumbers() {
+  var elements = document.querySelectorAll('.js-count-up');
+
+  elements.forEach(function (el) {
+    var target = Number(el.getAttribute('data-target') || 0);
+    var duration = 850;
+    var startTime = null;
+
+    function step(timestamp) {
+      if (!startTime) startTime = timestamp;
+
+      var progress = Math.min((timestamp - startTime) / duration, 1);
+      var eased = 1 - Math.pow(1 - progress, 3);
+      var current = Math.round(target * eased);
+
+      el.textContent = formatDashboardNumber(current);
+
+      if (progress < 1) {
+        requestAnimationFrame(step);
+      } else {
+        el.textContent = formatDashboardNumber(target);
+      }
+    }
+
+    requestAnimationFrame(step);
+  });
+}
+
+function animateMiniBars() {
+  var bars = document.querySelectorAll('.mini-bar-fill');
+
+  bars.forEach(function (bar, index) {
+    var width = Number(bar.getAttribute('data-width') || 0);
+
+    setTimeout(function () {
+      bar.style.width = width + '%';
+    }, 80 + index * 45);
+  });
+}
+
+function animateDashboardItems() {
+  var items = document.querySelectorAll('.dashboard-animate-item, .bar-block, .dashboard-section');
+
+  items.forEach(function (item, index) {
+    item.style.animationDelay = (index * 45) + 'ms';
+    item.classList.add('is-visible');
+  });
+}
+
+function formatDashboardNumber(value) {
+  var num = Number(value);
+
+  if (isNaN(num)) return String(value);
+
+  return Math.round(num).toLocaleString('en-US');
+}
+
+function downloadDashboardPdf() {
+  var dashboardCard = document.getElementById('dashboardCard');
+
+  if (!dashboardCard || dashboardCard.classList.contains('hidden')) {
+    alert('Chưa có dashboard để tải. Hãy chạy audit trước.');
+    return;
+  }
+
+  document.body.classList.add('print-dashboard-mode');
+
+  setTimeout(function () {
+    window.print();
+
+    setTimeout(function () {
+      document.body.classList.remove('print-dashboard-mode');
+    }, 500);
+  }, 120);
+}
+</script>
