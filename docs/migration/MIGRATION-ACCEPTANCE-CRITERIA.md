@@ -1,6 +1,6 @@
 # M00 — Migration Acceptance Criteria
 
-Status: **Plan drafted; test fixtures and production comparison outputs not yet collected.**
+Status: **Plan drafted; legacy source re-inspected 2026-10-26. Test fixtures and production comparison outputs not yet collected.**
 
 ## Goal
 Migrate the existing Google Apps Script SEO content audit into a TypeScript audit core for an agency app (20k–100k URLs per audit) without silently changing existing business rules. No application code is changed in M00.
@@ -81,15 +81,26 @@ Migrate the existing Google Apps Script SEO content audit into a TypeScript audi
 - Staging passed; release staged by agency/project group.
 - No automatic Apps Script `clasp push`, public deployment or merge to `main` without approval.
 
-## Initial risks to turn into tickets
-- R01: manifest has `ANYONE` + `USER_DEPLOYING`; verify actual deployment and protect server functions.
-- R02: synchronous all-in-one audit; large CSV/runtime failures.
-- R03: output spreadsheet created before normalization; partial artifact on error.
-- R04: percentile buckets depend on full dataset; naive chunks change classification.
-- R05: history in Script Properties (shared, limited).
-- R06: fixed output folder ID, Google Drive/Sheets coupling.
-- R07: lack of CI regression tests.
-- R08: first-match hides other diagnoses; defer behavior change until separate approved release.
+## M00 risk register (re-inspected 2026-10-26)
+
+Classification: **Confirmed** = verified in source; **Configuration risk** = real exposure depends on the active deployment; **Hypothesis** = unverified, requires benchmark or fixture. Do not escalate a hypothesis into a defect claim without evidence.
+
+| ID | Classification | Finding | Disposition |
+|---|---|---|---|
+| R01 | Configuration risk | Manifest has `ANYONE` + `USER_DEPLOYING` + `ALLOWALL` framing; effective permissions unverified | Verify active deployment; protect server functions |
+| R02 | Confirmed (design) / Hypothesis (impact) | Synchronous all-in-one audit on in-memory arrays; 20,000-row limit enforced server-side, 10 MB client-side only. Capacity beyond 20k and RAM/time behavior are **unbenchmarked — no failure claim is asserted** | Benchmark in M03 before any statement about 20k/50k/100k outcomes |
+| R03 | Confirmed | Output spreadsheet created after parse/header validation but before normalization/audit; a later error leaves a partial artifact | Keep as parity constraint; fix in target architecture |
+| R04 | Confirmed | Percentile buckets depend on the full dataset (positive-value populations per metric); naive chunking changes classification | Compute dataset-wide percentiles before per-row evaluation |
+| R05 | Confirmed | Audit history in shared Script Properties (`AUDIT_HISTORY_V1`, last 50); overwritten across users | Replace with per-org/project persistence |
+| R06 | Confirmed | Hardcoded output Drive folder ID (Config + OutputWriter fallback); Google Drive/Sheets coupling | Extract behind exporter adapter |
+| R07 | Confirmed | Only callable smoke-test functions; no automated CI suite | Build parity test suite in M02 |
+| R08 | Confirmed | First-match hides other applicable diagnoses | Defer any behavior change to a separate approved workstream |
+| R09 | Confirmed | Unknown-scope rows that match no rule are silently dropped (`evaluateMonitor` requires `is_html === true`) | Golden-test this drop behavior for parity |
+| R10 | Confirmed | `CONFIG.auditEngineVersion` undefined: UI/history fall back to `'1.2'`, `00_README`/`CONFIG_SNAPSHOT` write an empty version string | Replicate exact behavior in parity; optional upstream fix is a separate approved change |
+| R11 | Confirmed | Dead `CONFIG.thresholds` constants; Normalizer hardcodes depth (<=1/<=3/<=5) and response-time (0.5/1.5/3) buckets. Misleading configuration, **not** a demonstrated wrong-SEO-outcome defect | Parity must copy inline values; version real thresholds in target config |
+| R12 | Confirmed | 10 MB size limit enforced client-side only; server accepts any payload size | Add server-side validation in target ingestion |
+| R13 | Hypothesis (demoted) | BOM delimiter failure: **not confirmed** — `normalizeHeaderText` strips U+FEFF from headers and delimiter counting is unaffected | Cover BOM/encoding variants in parser fixtures (G14); do not assert |
+| R14 | Hypothesis | Specific RAM usage or failure at 100k URLs: no measurement exists | Measure in M03; do not claim certainty |
 
 ## Sign-off sheet (fill later)
 - Baseline source commit:
